@@ -1,4 +1,8 @@
-.PHONY: install bash-example py-example
+.PHONY: init install bash-example py-example
+
+init:
+	@echo "Initializing git submodules..."
+	git submodule update --init --recursive
 
 install:
 	@echo "Installing dependencies..."

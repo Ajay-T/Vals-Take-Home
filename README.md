@@ -7,7 +7,8 @@ A system for running AI agents against benchmark tasks.
 ### Installation
 
 ```bash
-make install
+make init       # Initialize git submodules (mini-swe-agent)
+make install    # Install dependencies
 source .venv/bin/activate
 ```
 
