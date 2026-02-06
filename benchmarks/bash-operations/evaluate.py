@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Evaluation script for bash-operations benchmark tasks."""
 
 import argparse

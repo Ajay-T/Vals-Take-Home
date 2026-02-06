@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Setup script for python-tasks benchmark tasks."""
 
 import argparse
