@@ -22,11 +22,16 @@ A unified CLI for running any AI agent against any agentic benchmark. Abstracts 
 │         ThreadPoolExecutor  (max 3 concurrent)              │
 │                                                             │
 │  for each task:                                             │
-│  ┌──────────┐   ┌──────────────┐   ┌────────────────────┐  │
-│  │  Setup   │ → │  Run Agent   │ → │  Evaluate & Store  │  │
-│  │ (setup   │   │ (pty so TUI  │   │ (parse JSON stdout │  │
-│  │ scripts) │   │  agents work)│   │  write to DB)      │  │
-│  └──────────┘   └──────────────┘   └────────────────────┘  │
+│  ┌────────────────┐  ┌──────────────┐  ┌────────────────┐  │
+│  │  Setup         │  │  Run Agent   │  │  Evaluate      │  │
+│  │ (docker run    │→ │ (pty so TUI  │→ │ (docker run    │  │
+│  │  --rm, ro      │  │  agents work)│  │  --rm, parse   │  │
+│  │  bind-mount)   │  │              │  │  JSON stdout)  │  │
+│  └────────────────┘  └──────────────┘  └────────────────┘  │
+│         │                   │                  │            │
+│         └───────────────────┴──────────────────┘            │
+│                    shared workspace volume                   │
+│               (workspaces/{run_id}/{task_id}/)               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -41,9 +46,16 @@ Each benchmark and agent defines a `harness.json` that tells the harness how to 
   "description_field": "problem_statement",
   "setup_cmd": ["python", "{benchmark_dir}/setup.py", "--workspace-dir", "{workspace}", "--task", "{task_id}"],
   "evaluate_cmd": ["python", "{benchmark_dir}/evaluate.py", "--workspace-dir", "{workspace}", "--task", "{task_id}"],
-  "evaluate_result": "json_stdout"
+  "evaluate_result": "json_stdout",
+  "docker": {
+    "image": "harness-benchmark:latest",
+    "benchmark_dir_in_container": "/benchmark",
+    "workspace_dir_in_container": "/workspace"
+  }
 }
 ```
+
+The optional `"docker"` block tells the harness to run setup and evaluate inside a container. The benchmark scripts are bind-mounted read-only at `/benchmark`; the workspace is bind-mounted read-write at `/workspace`. If the block is absent the harness falls back to running those phases directly on the host.
 
 **Agent `harness.json`:**
 ```json
@@ -59,6 +71,7 @@ Each benchmark and agent defines a `harness.json` that tells the harness how to 
 ### Prerequisites
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
+- [Docker](https://docs.docker.com/get-docker/) (Desktop or Engine)
 
 ### Install
 
@@ -71,6 +84,9 @@ make init
 
 # 3. Install dependencies
 make install
+
+# 4. Build the benchmark Docker image (used to isolate setup and evaluate phases)
+docker build -f docker/benchmark.Dockerfile -t harness-benchmark:latest .
 ```
 
 ### Configure
@@ -180,6 +196,9 @@ Example output:
 │   └── configs/
 │       └── mini-swe-agent.json  # Agent invocation config
 │
+├── docker/
+│   └── benchmark.Dockerfile    # Shared image for setup/evaluate phases
+│
 ├── .env.example        # Environment variable template
 ├── pyproject.toml
 └── Makefile
@@ -198,9 +217,9 @@ Example output:
 4. Spawns the background worker (if not already running) via a PID-file-guarded detached subprocess
 
 **The worker** polls the DB every 2 seconds and for each pending task:
-1. **Setup** — runs the benchmark's `setup_cmd` template (creates the workspace, seeds input files)
-2. **Agent** — runs the agent's `run_cmd` template inside the workspace directory, using a pseudo-terminal (pty) so TUI-based agents like mini-swe-agent work correctly
-3. **Evaluate** — runs the benchmark's `evaluate_cmd`, parses the JSON stdout, stores `passed`/`score`/`details` in the DB
+1. **Setup** — runs the benchmark's `setup_cmd` inside a Docker container (`docker run --rm`) with the workspace bind-mounted, creating the task environment
+2. **Agent** — runs the agent's `run_cmd` on the host inside the workspace directory, using a pseudo-terminal (pty) so TUI-based agents like mini-swe-agent work correctly; the workspace is shared with the containers via the bind-mount
+3. **Evaluate** — runs the benchmark's `evaluate_cmd` inside Docker, parses the JSON stdout, stores `passed`/`score`/`details` in the DB
 
 ### Part 2: Queue-Based Execution
 
@@ -213,7 +232,7 @@ Example output:
 
 1. Create `benchmarks/<name>/dataset.json` with your tasks
 2. Write `setup.py` and `evaluate.py` (evaluate must print JSON with `passed`, `score`, `details`)
-3. Add `benchmarks/<name>/harness.json` describing how to invoke them
+3. Add `benchmarks/<name>/harness.json` describing how to invoke them — include a `"docker"` block with `"image"` to run setup/evaluate in a container, or omit it to run on the host
 
 ### Adding a New Agent
 

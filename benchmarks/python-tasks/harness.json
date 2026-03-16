@@ -15,5 +15,10 @@
     "--workspace",
     "{workspace}"
   ],
-  "evaluate_result": "json_stdout"
+  "evaluate_result": "json_stdout",
+  "docker": {
+    "image": "harness-benchmark:latest",
+    "benchmark_dir_in_container": "/benchmark",
+    "workspace_dir_in_container": "/workspace"
+  }
 }
