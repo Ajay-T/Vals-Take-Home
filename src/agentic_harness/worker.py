@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 MAX_WORKERS = int(os.environ.get("HARNESS_MAX_WORKERS", "3"))

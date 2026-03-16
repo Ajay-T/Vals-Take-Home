@@ -65,16 +65,6 @@ def get_run(run_id: str) -> sqlite3.Row | None:
     return row
 
 
-def update_run_status(run_id: str, status: str, now: str) -> None:
-    conn = _connect()
-    conn.execute(
-        "UPDATE runs SET status = ?, updated_at = ? WHERE id = ?",
-        (status, now, run_id),
-    )
-    conn.commit()
-    conn.close()
-
-
 def refresh_run_status(run_id: str, now: str) -> None:
     """Derive run status from its task_runs and update accordingly."""
     conn = _connect()
@@ -83,13 +73,11 @@ def refresh_run_status(run_id: str, now: str) -> None:
     ).fetchall()
     statuses = {r["status"] for r in rows}
 
-    if "running" in statuses:
-        status = "running"
-    elif statuses == {"completed"} or statuses == {"failed"} or statuses <= {"completed", "failed"}:
-        status = "completed"
-    elif "pending" in statuses:
+    # Any task still in progress keeps the run marked running
+    if statuses & {"pending", "claimed", "running"}:
         status = "running"
     else:
+        # All tasks are in a terminal state (completed or failed)
         status = "completed"
 
     conn.execute(

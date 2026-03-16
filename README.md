@@ -165,19 +165,20 @@ Example output:
 │
 ├── benchmarks/
 │   ├── bash-operations/
-│   │   ├── harness.json    # Harness config (NEW)
+│   │   ├── harness.json    # Harness config
 │   │   ├── dataset.json    # 5 bash tasks
 │   │   ├── setup.py        # Workspace setup
 │   │   └── evaluate.py     # Task evaluation
 │   └── python-tasks/
-│       ├── harness.json    # Harness config (NEW)
+│       ├── harness.json    # Harness config
 │       ├── dataset.json    # 3 Python tasks
 │       ├── prepare.py      # Workspace setup
 │       └── grade.py        # Task evaluation (pytest)
 │
 ├── agents/
-│   └── mini-swe-agent/
-│       └── harness.json    # Agent invocation config (NEW)
+│   ├── mini-swe-agent/     # git submodule
+│   └── configs/
+│       └── mini-swe-agent.json  # Agent invocation config
 │
 ├── .env.example        # Environment variable template
 ├── pyproject.toml
@@ -216,7 +217,8 @@ Example output:
 
 ### Adding a New Agent
 
-1. Create `agents/<name>/harness.json` with the `run_cmd` template
+1. Create `agents/configs/<name>.json` with the `run_cmd` template
+2. Pass `--agent agents/<name>` when running (the harness resolves the config from `agents/configs/` automatically)
 
 ---
 

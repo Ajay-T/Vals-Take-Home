@@ -157,9 +157,8 @@ def execute_task_run(
         )
         subprocess.run(setup_cmd, check=True, capture_output=True, env=env)
 
-        # 2. Run agent inside the workspace
-        # mini-swe-agent uses Textual TUI which requires a real PTY on macOS;
-        # running it with captured pipes causes an OSError in kqueue.
+        # 2. Run agent inside the workspace via a pseudo-terminal so that
+        #    TUI-based agents have access to a real terminal device.
         agent_cmd = _fmt(
             agent_config["run_cmd"],
             task_description=task["description"],
@@ -226,7 +225,11 @@ def execute_task_run(
 
 
 def _run_in_pty(cmd: list[str], *, cwd: str, env: dict, timeout: int) -> None:
-    """Run a command inside a pseudo-terminal so TUI apps (e.g. mini) work on macOS."""
+    """Run a command inside a pseudo-terminal.
+
+    Raises subprocess.TimeoutExpired if the process does not finish within
+    `timeout` seconds.
+    """
     import select
     import signal
     import time
@@ -241,11 +244,13 @@ def _run_in_pty(cmd: list[str], *, cwd: str, env: dict, timeout: int) -> None:
 
     # Parent: drain the pty output and enforce timeout
     deadline = time.monotonic() + timeout
+    timed_out = False
     try:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 os.kill(pid, signal.SIGTERM)
+                timed_out = True
                 break
             ready, _, _ = select.select([master_fd], [], [], min(remaining, 1.0))
             if ready:
@@ -254,8 +259,7 @@ def _run_in_pty(cmd: list[str], *, cwd: str, env: dict, timeout: int) -> None:
                 except OSError:
                     break  # child closed the pty
             # Check if child exited
-            result = os.waitpid(pid, os.WNOHANG)
-            if result[0] != 0:
+            if os.waitpid(pid, os.WNOHANG)[0] != 0:
                 break
     finally:
         try:
@@ -266,6 +270,9 @@ def _run_in_pty(cmd: list[str], *, cwd: str, env: dict, timeout: int) -> None:
             os.waitpid(pid, 0)
         except ChildProcessError:
             pass
+
+    if timed_out:
+        raise subprocess.TimeoutExpired(cmd, timeout)
 
 
 def _build_env() -> dict:
