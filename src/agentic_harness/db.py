@@ -126,19 +126,27 @@ def get_task_runs(run_id: str) -> list[sqlite3.Row]:
 
 
 def get_pending_task_runs(limit: int = 5) -> list[sqlite3.Row]:
-    """Fetch and atomically claim pending task runs."""
+    """Atomically claim and return pending task runs.
+
+    Uses a single UPDATE ... RETURNING statement so that concurrent workers
+    cannot double-claim the same row — there is no window between the SELECT
+    and the UPDATE where another worker could intervene.
+    """
     conn = _connect()
     rows = conn.execute(
-        "SELECT * FROM task_runs WHERE status = 'pending' "
-        "ORDER BY created_at LIMIT ?",
+        """
+        UPDATE task_runs
+        SET status = 'claimed'
+        WHERE id IN (
+            SELECT id FROM task_runs
+            WHERE status = 'pending'
+            ORDER BY created_at
+            LIMIT ?
+        )
+        RETURNING *
+        """,
         (limit,),
     ).fetchall()
-    # Claim them immediately so other workers don't double-pick
-    for row in rows:
-        conn.execute(
-            "UPDATE task_runs SET status = 'claimed' WHERE id = ? AND status = 'pending'",
-            (row["id"],),
-        )
     conn.commit()
     conn.close()
     return rows

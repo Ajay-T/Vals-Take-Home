@@ -3,6 +3,7 @@
 import json
 import os
 import pty
+import shutil
 import subprocess
 import uuid
 from datetime import datetime, timezone
@@ -176,10 +177,35 @@ def execute_task_run(
             eval_cmd, capture_output=True, text=True, env=env
         )
 
-        eval_output = json.loads(eval_proc.stdout)
-        passed = bool(eval_output.get("passed", False))
-        score = float(eval_output.get("score", 1.0 if passed else 0.0))
-        details = json.dumps(eval_output.get("details", {}))
+        result_type = benchmark_config.get("evaluate_result", "json_stdout")
+        if result_type == "exit_code":
+            # Pass/fail determined purely by exit code; no JSON expected
+            passed = eval_proc.returncode == 0
+            score = 1.0 if passed else 0.0
+            details = json.dumps({"exit_code": eval_proc.returncode, "stdout": eval_proc.stdout})
+        else:
+            # Default: "json_stdout" — evaluate script prints a JSON result object
+            eval_output = json.loads(eval_proc.stdout)
+            passed = bool(eval_output.get("passed", False))
+            score = float(eval_output.get("score", 1.0 if passed else 0.0))
+            details = json.dumps(eval_output.get("details", {}))
+
+    except subprocess.TimeoutExpired as exc:
+        # Agent hung past the timeout — clean up the workspace so stale files
+        # don't accumulate and don't interfere with future runs.
+        if workspace.exists():
+            shutil.rmtree(workspace, ignore_errors=True)
+        now = _now()
+        db.update_task_run_result(
+            task_run_id,
+            "failed",
+            False,
+            0.0,
+            json.dumps({"error": f"Agent timed out after {exc.timeout}s"}),
+            now,
+        )
+        db.refresh_run_status(run_id, now)
+        return
 
     except Exception as exc:
         now = _now()
