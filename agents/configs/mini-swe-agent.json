@@ -1,0 +1,9 @@
+{
+  "run_cmd": [
+    "mini",
+    "--exit-immediately",
+    "-y",
+    "-t",
+    "{task_description}"
+  ]
+}

@@ -1,96 +1,230 @@
-# Agentic Harness Take-Home
+# Agentic Harness
 
-A system for running AI agents against benchmark tasks.
+A unified CLI for running any AI agent against any agentic benchmark. Abstracts over the differing interfaces, environments, and evaluation logic each benchmark uses — so you can add new agents and benchmarks without touching core harness code.
 
-## Quick Start
+## Architecture
 
-### Installation
-
-```bash
-make init       # Initialize git submodules (mini-swe-agent)
-make install    # Install dependencies
-source .venv/bin/activate
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        CLI  (harness)                       │
+│          run  ·  status  ·  results                         │
+└────────────────────────┬────────────────────────────────────┘
+                         │ submit tasks
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    SQLite Queue / DB                        │
+│           runs table  ·  task_runs table                    │
+└────────────────────────┬────────────────────────────────────┘
+                         │ poll
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│               Background Worker Process                     │
+│         ThreadPoolExecutor  (max 3 concurrent)              │
+│                                                             │
+│  for each task:                                             │
+│  ┌──────────┐   ┌──────────────┐   ┌────────────────────┐  │
+│  │  Setup   │ → │  Run Agent   │ → │  Evaluate & Store  │  │
+│  │ (setup   │   │ (pty so TUI  │   │ (parse JSON stdout │  │
+│  │ scripts) │   │  agents work)│   │  write to DB)      │  │
+│  └──────────┘   └──────────────┘   └────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Configuring mini-swe-agent
+### Key abstraction: `harness.json`
 
-Run the setup wizard to configure your default model and API key:
+Each benchmark and agent defines a `harness.json` that tells the harness how to invoke it using template strings. This means zero benchmark-specific code lives in the core harness.
+
+**Benchmark `harness.json`:**
+```json
+{
+  "task_id_field": "task_id",
+  "description_field": "problem_statement",
+  "setup_cmd": ["python", "{benchmark_dir}/setup.py", "--workspace-dir", "{workspace}", "--task", "{task_id}"],
+  "evaluate_cmd": ["python", "{benchmark_dir}/evaluate.py", "--workspace-dir", "{workspace}", "--task", "{task_id}"],
+  "evaluate_result": "json_stdout"
+}
+```
+
+**Agent `harness.json`:**
+```json
+{
+  "run_cmd": ["mini", "--exit-immediately", "-y", "-t", "{task_description}"]
+}
+```
+
+---
+
+## Setup
+
+### Prerequisites
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/)
+
+### Install
+
+```bash
+# 1. Clone and enter the repo
+git clone <repo-url> && cd <repo>
+
+# 2. Initialize mini-swe-agent submodule
+make init
+
+# 3. Install dependencies
+make install
+```
+
+### Configure
+
+Copy `.env.example` to `.env` and add your Anthropic API key:
+
+```bash
+cp .env.example .env
+# edit .env and set ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Configure mini-swe-agent (run this once from your terminal):
 
 ```bash
 mini-extra config setup
 ```
 
-Read more about how to configure mini-swe-agent: https://mini-swe-agent.com/latest/usage/config/
+---
 
-### Run Examples
+## Usage
+
+### Run a benchmark
 
 ```bash
-make bash-example
-make py-example
+# Run all tasks in a benchmark
+uv run harness run --agent agents/mini-swe-agent --benchmark bash-operations
+
+# Run specific tasks
+uv run harness run --agent agents/mini-swe-agent --benchmark bash-operations --task_ids bash-001,bash-002
+
+# Run python-tasks benchmark
+uv run harness run --agent agents/mini-swe-agent --benchmark python-tasks
 ```
 
-These commands demonstrate the full workflow: setup → run agent → evaluate.
+`harness run` returns a `run_id` immediately and starts a background worker — you can submit multiple runs without blocking.
+
+### Check status
+
+```bash
+uv run harness status --run_id <run_id>
+```
+
+Example output:
+```
+Run ID:    0039d516
+Agent:     agents/mini-swe-agent
+Benchmark: bash-operations
+Status:    running
+
+Tasks (5):
+  bash-001             completed
+  bash-002             running
+  bash-003             pending
+  bash-004             pending
+  bash-005             pending
+```
+
+### Get results
+
+```bash
+uv run harness results --run_id <run_id>
+```
+
+Example output:
+```json
+{
+  "run_id": "0039d516",
+  "agent": "agents/mini-swe-agent",
+  "benchmark": "bash-operations",
+  "status": "completed",
+  "summary": {
+    "total": 5,
+    "completed": 5,
+    "passed": 5,
+    "accuracy": 1.0
+  },
+  "tasks": [...]
+}
+```
+
+---
 
 ## Project Structure
 
 ```
 .
+├── src/agentic_harness/
+│   ├── cli.py          # Click CLI — run / status / results commands
+│   ├── db.py           # SQLite layer (runs + task_runs tables)
+│   ├── runner.py       # Core execution: setup → agent → evaluate
+│   └── worker.py       # Background worker with ThreadPoolExecutor
+│
 ├── benchmarks/
-│   ├── bash-operations/      # Bash command benchmark
-│   │   ├── dataset.json      # 5 bash tasks
-│   │   ├── setup.py          # Setup workspace
-│   │   ├── evaluate.py       # Evaluate results
-│   │   └── README.md
-│   └── python-tasks/         # Python coding benchmark
-│       ├── dataset.json      # 3 Python tasks
-│       ├── prepare.py        # Setup workspace (different name!)
-│       ├── grade.py          # Evaluate results (different name!)
-│       └── README.md
+│   ├── bash-operations/
+│   │   ├── harness.json    # Harness config (NEW)
+│   │   ├── dataset.json    # 5 bash tasks
+│   │   ├── setup.py        # Workspace setup
+│   │   └── evaluate.py     # Task evaluation
+│   └── python-tasks/
+│       ├── harness.json    # Harness config (NEW)
+│       ├── dataset.json    # 3 Python tasks
+│       ├── prepare.py      # Workspace setup
+│       └── grade.py        # Task evaluation (pytest)
+│
 ├── agents/
-│   └── mini-swe-agent/       # Example agent (git submodule)
-├── examples/                 # Example scripts
-├── src/
-│   └── agentic_harness/      # Your harness implementation
+│   └── mini-swe-agent/
+│       └── harness.json    # Agent invocation config (NEW)
+│
+├── .env.example        # Environment variable template
+├── pyproject.toml
 └── Makefile
 ```
 
-## Workflow
+---
 
-Each benchmark follows a three-step process:
+## How It Works
 
-1. **Setup**: Prepare workspace with initial files
-2. **Execute**: Run agent to solve the task
-3. **Evaluate**: Check if task was completed correctly
+### Part 1: Core Execution
 
-## Benchmarks
+**`harness run`** calls `runner.submit_run()` which:
+1. Loads `benchmarks/<name>/harness.json` and `dataset.json`
+2. Filters tasks to the requested `task_ids` (or all tasks)
+3. Inserts one `runs` row and one `task_runs` row per task into SQLite
+4. Spawns the background worker (if not already running) via a PID-file-guarded detached subprocess
 
-### bash-operations
-- 5 simple bash tasks
-- Uses `alpine:latest` Docker image
-- CLI: `--workspace-dir <path> --task <id>`
-- Exit codes: 0 for pass, 1 for fail
+**The worker** polls the DB every 2 seconds and for each pending task:
+1. **Setup** — runs the benchmark's `setup_cmd` template (creates the workspace, seeds input files)
+2. **Agent** — runs the agent's `run_cmd` template inside the workspace directory, using a pseudo-terminal (pty) so TUI-based agents like mini-swe-agent work correctly
+3. **Evaluate** — runs the benchmark's `evaluate_cmd`, parses the JSON stdout, stores `passed`/`score`/`details` in the DB
 
-[Full documentation](benchmarks/bash-operations/README.md)
+### Part 2: Queue-Based Execution
 
-### python-tasks
-- 3 simple Python tasks
-- Uses `python:3.11-slim` Docker image
-- CLI: `<task_id> --workspace <path>` (positional argument!)
-- Exit code: Always 0 (check JSON for pass/fail)
+- `harness run` is non-blocking — returns a `run_id` instantly
+- The worker runs as a detached subprocess (survives the CLI process exiting), tracked by a PID file at `~/.agentic_harness/worker.pid`
+- A `ThreadPoolExecutor` with configurable concurrency (`HARNESS_MAX_WORKERS`, default 3) runs tasks in parallel
+- All state lives in SQLite at `~/.agentic_harness/harness.db`
 
-[Full documentation](benchmarks/python-tasks/README.md)
+### Adding a New Benchmark
 
-## mini-swe-agent
+1. Create `benchmarks/<name>/dataset.json` with your tasks
+2. Write `setup.py` and `evaluate.py` (evaluate must print JSON with `passed`, `score`, `details`)
+3. Add `benchmarks/<name>/harness.json` describing how to invoke them
 
-Important flags:
-- `--exit-immediately`: Required to prevent hanging
-- `-y/--yolo`: Skip action confirmations
-- `-t/--task`: Task description
+### Adding a New Agent
 
-For more information, run `mini --help` or read the [mini-swe-agent quickstart](https://mini-swe-agent.com/latest/quickstart/).
+1. Create `agents/<name>/harness.json` with the `run_cmd` template
 
-## Notes
+---
 
-- Benchmarks have intentionally different interfaces to test flexibility
-- Tasks specify `docker_image` field for container execution
-- Each benchmark has its own evaluation logic
+## Benchmark Results
+
+Tested with `mini-swe-agent` + `claude-haiku-4-5`:
+
+| Benchmark | Tasks | Passed | Accuracy |
+|-----------|-------|--------|----------|
+| bash-operations | 5 | 5 | 100% |
+| python-tasks | 3 | 3 | 100% |

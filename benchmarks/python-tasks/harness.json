@@ -1,0 +1,19 @@
+{
+  "task_id_field": "id",
+  "description_field": "prompt",
+  "setup_cmd": [
+    "python",
+    "{benchmark_dir}/prepare.py",
+    "{task_id}",
+    "--workspace",
+    "{workspace}"
+  ],
+  "evaluate_cmd": [
+    "python",
+    "{benchmark_dir}/grade.py",
+    "{task_id}",
+    "--workspace",
+    "{workspace}"
+  ],
+  "evaluate_result": "json_stdout"
+}

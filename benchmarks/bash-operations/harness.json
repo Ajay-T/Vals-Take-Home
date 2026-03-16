@@ -1,0 +1,21 @@
+{
+  "task_id_field": "task_id",
+  "description_field": "problem_statement",
+  "setup_cmd": [
+    "python",
+    "{benchmark_dir}/setup.py",
+    "--workspace-dir",
+    "{workspace}",
+    "--task",
+    "{task_id}"
+  ],
+  "evaluate_cmd": [
+    "python",
+    "{benchmark_dir}/evaluate.py",
+    "--workspace-dir",
+    "{workspace}",
+    "--task",
+    "{task_id}"
+  ],
+  "evaluate_result": "json_stdout"
+}
