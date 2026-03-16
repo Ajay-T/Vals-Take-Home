@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 MAX_WORKERS = int(os.environ.get("HARNESS_MAX_WORKERS", "3"))
-POLL_INTERVAL = 2  # seconds between queue polls
+POLL_INTERVAL = 2       # seconds between queue polls
+IDLE_EXIT_AFTER = 10    # exit after this many consecutive empty polls (~20s)
 PID_FILE = Path.home() / ".agentic_harness" / "worker.pid"
 
 
@@ -60,6 +61,8 @@ def run_worker() -> None:
 def _loop() -> None:
     from . import db, runner  # local import to avoid circular deps at module load
 
+    idle_polls = 0  # consecutive polls that found no work
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         active_futures = {}  # future -> task_run_id
 
@@ -77,19 +80,26 @@ def _loop() -> None:
             free_slots = MAX_WORKERS - len(active_futures)
             if free_slots > 0:
                 pending = db.get_pending_task_runs(limit=free_slots)
-                for task_run in pending:
-                    run = db.get_run(task_run["run_id"])
-                    if run is None:
-                        continue
-                    future = pool.submit(
-                        runner.execute_task_run,
-                        task_run["id"],
-                        task_run["run_id"],
-                        task_run["task_id"],
-                        run["agent"],
-                        run["benchmark"],
-                    )
-                    active_futures[future] = task_run["id"]
+                if pending:
+                    idle_polls = 0
+                    for task_run in pending:
+                        run = db.get_run(task_run["run_id"])
+                        if run is None:
+                            continue
+                        future = pool.submit(
+                            runner.execute_task_run,
+                            task_run["id"],
+                            task_run["run_id"],
+                            task_run["task_id"],
+                            run["agent"],
+                            run["benchmark"],
+                        )
+                        active_futures[future] = task_run["id"]
+                elif not active_futures:
+                    # No pending tasks and nothing in flight — increment idle counter
+                    idle_polls += 1
+                    if idle_polls >= IDLE_EXIT_AFTER:
+                        return  # clean exit; PID file removed by run_worker's finally block
 
             time.sleep(POLL_INTERVAL)
 
